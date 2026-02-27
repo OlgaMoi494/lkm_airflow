@@ -21,8 +21,6 @@ ETL pipeline for processing TikTok Google Play reviews and loading into MongoDB 
 │   └── loading_dag.py       # Dataset-aware DAG for MongoDB loading
 ├── plugins/
 │   └── transformations.py   # Data transformation functions
-├── queries/                 # MongoDB aggregation queries
-├── tests/                   # Pytest test suite
 ├── data/
 │   ├── input/               # Source CSV files
 │   └── processed/           # Transformed data output
