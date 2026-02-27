@@ -35,7 +35,6 @@ ETL pipeline for processing TikTok Google Play reviews and loading into MongoDB 
 - **MongoDB 6** — NoSQL database
 - **Pandas** — Data processing
 - **Docker** — Containerization
-- **Pytest** — Testing
 
 ## Quick Start
 
