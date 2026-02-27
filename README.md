@@ -146,12 +146,11 @@ db.processed_data.aggregate([
 
 ### processing_dag Graph View
 
-![processing_dag_image](readme_screenshorts/processing_dag.png)
+![processing_dag_image](readme_screenshots/processing_dag.png)
 
 ### loading_dag Graph View
 
-![processing_dag_image](readme_screenshorts/loading_dag.png)
-
+![loading_dag_image](readme_screenshots/loading_dag.png)
 
 
 ## License
