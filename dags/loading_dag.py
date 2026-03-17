@@ -1,7 +1,10 @@
 import os
 
-from airflow.sdk import dag, task
+import structlog
+from airflow.sdk import Variable, dag, task
 from processing_dag import processed_data_asset
+
+logger = structlog.get_logger()
 
 
 @dag(
@@ -17,7 +20,11 @@ def loading_dag():
         import pandas as pd
         from airflow.providers.mongo.hooks.mongo import MongoHook
 
-        csv_path = "/opt/airflow/data/processed/processed_data.csv"
+        data_base_path = Variable.get("data_base_path", default="/opt/airflow/data")
+        processed_file_name = Variable.get(
+            "processed_file_name", default="processed_data.csv"
+        )
+        csv_path = os.path.join(data_base_path, "processed", processed_file_name)
 
         if not os.path.exists(csv_path):
             raise FileNotFoundError(f"File not found: {csv_path}")
@@ -26,9 +33,10 @@ def loading_dag():
 
         records = df.to_dict("records")
 
-        hook = MongoHook(conn_id="mongo_default")
-        collection_name = os.getenv("MONGO_COLLECTION", "processed_data")
-        mongo_db = os.getenv("MONGO_DB", "airflow_db")
+        mongo_conn_id = Variable.get("mongo_conn_id", default="mongo_default")
+        hook = MongoHook(conn_id=mongo_conn_id)
+        collection_name = Variable.get("mongo_collection", default="processed_data")
+        mongo_db = Variable.get("mongo_db", default="airflow_db")
         conn = hook.get_conn()
         conn[mongo_db][collection_name].delete_many({})
         hook.insert_many(
@@ -37,7 +45,12 @@ def loading_dag():
             mongo_db=mongo_db,
         )
 
-        print(f"Loaded {len(records)} records to MongoDB")
+        logger.info(
+            "Records loaded to MongoDB",
+            rows=len(records),
+            collection=collection_name,
+            database=mongo_db,
+        )
 
         return len(records)
 

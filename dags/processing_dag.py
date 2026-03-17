@@ -2,11 +2,19 @@ import os
 import shutil
 
 import pandas as pd
-from airflow.sdk import Asset, dag, task, task_group
-from airflow.sensors.base import PokeReturnValue
-from pendulum import datetime
+import structlog
+from airflow.sdk import Asset, Variable, dag, task, task_group
+from airflow.sdk.bases.sensor import PokeReturnValue
 
-processed_data_asset = Asset("file:///opt/airflow/data/processed/processed_data.csv")
+from include import clean_content_logic, replace_nulls_logic, sort_by_date_logic
+
+logger = structlog.get_logger()
+
+data_base_path = Variable.get("data_base_path", default="/opt/airflow/data")
+processed_file_name = Variable.get("processed_file_name", default="processed_data.csv")
+processed_data_asset = Asset(
+    f"file://{os.path.join(data_base_path, 'processed', processed_file_name)}"
+)
 
 
 @dag(
@@ -16,9 +24,17 @@ processed_data_asset = Asset("file:///opt/airflow/data/processed/processed_data.
 )
 def processing_dag():
 
+    input_file_name = Variable.get(
+        "input_file_name", default="tiktok_google_play_reviews.csv"
+    )
+
+    temp_path_after_nulls = os.path.join(data_base_path, "temp_after_nulls.csv")
+    temp_path_after_sort = os.path.join(data_base_path, "temp_after_sort.csv")
+    temp_path_after_clean = os.path.join(data_base_path, "temp_after_clean.csv")
+
     @task.sensor(poke_interval=30, timeout=600, mode="poke")
     def wait_for_file():
-        input_path = "/opt/airflow/data/input/tiktok_google_play_reviews.csv"
+        input_path = os.path.join(data_base_path, "input", input_file_name)
 
         if os.path.exists(input_path):
             return PokeReturnValue(is_done=True, xcom_value=input_path)
@@ -32,76 +48,78 @@ def processing_dag():
         return "process_data_group.replace_nulls"
 
     @task
-    def log_empty_file():
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        log_message = f"File is empty at {timestamp}\n"
-
-        with open("/opt/airflow/logs/empty_files.log", "a") as f:
-            f.write(log_message)
-
-        print(log_message)
+    def log_empty_file(ti=None, dag=None, logical_date=None):
+        logger.warning(
+            "Empty file detected",
+            dag_id=dag.dag_id,
+            task_id=ti.task_id,
+            logical_date=logical_date,
+        )
 
     @task_group(tooltip="Data transformation tasks")
     def process_data_group(file_path: str):
 
         @task()
         def replace_nulls(file_path: str):
-            from include import replace_nulls_logic
 
             df = pd.read_csv(file_path)
             df = replace_nulls_logic(df)
 
-            temp_path = "/opt/airflow/data/temp_after_nulls.csv"
-            df.to_csv(temp_path, index=False)
+            df.to_csv(temp_path_after_nulls, index=False)
 
-            print(f"Replaced nulls: {df.shape[0]} rows")
-            return temp_path
+            logger.info(
+                "Null values replaced",
+                rows=df.shape[0],
+                file_path=temp_path_after_nulls,
+            )
+            return temp_path_after_nulls
 
         @task()
         def sort_by_date(temp_path: str):
-            from include import sort_by_date_logic
 
             df = pd.read_csv(temp_path)
             df = sort_by_date_logic(df)
 
-            temp_path = "/opt/airflow/data/temp_after_sort.csv"
-            df.to_csv(temp_path, index=False)
+            df.to_csv(temp_path_after_sort, index=False)
 
-            print(f"Sorted by date: {df.shape[0]} rows")
-            return temp_path
+            logger.info(
+                "Sorted by date", rows=df.shape[0], file_path=temp_path_after_sort
+            )
+            return temp_path_after_sort
 
         @task()
         def clean_content(temp_path: str):
-            from include import clean_content_logic
 
             df = pd.read_csv(temp_path)
             df = clean_content_logic(df)
 
-            temp_path = "/opt/airflow/data/temp_after_clean.csv"
-            df.to_csv(temp_path, index=False)
+            df.to_csv(temp_path_after_clean, index=False)
 
-            print(f"Cleaned content: {df.shape[0]} rows")
-            return temp_path
+            logger.info(
+                "Content cleaned", rows=df.shape[0], file_path=temp_path_after_clean
+            )
+            return temp_path_after_clean
 
         @task(outlets=[processed_data_asset])
         def save_to_dataset(temp_path: str):
 
-            output_dir = "/opt/airflow/data/processed"
+            output_dir = os.path.join(data_base_path, "processed")
             os.makedirs(output_dir, exist_ok=True)
 
-            output_path = f"{output_dir}/processed_data.csv"
+            output_path = os.path.join(output_dir, processed_file_name)
             shutil.copy(temp_path, output_path)
 
             for temp_file in [
-                "/opt/airflow/data/temp_after_nulls.csv",
-                "/opt/airflow/data/temp_after_sort.csv",
-                "/opt/airflow/data/temp_after_clean.csv",
+                temp_path_after_nulls,
+                temp_path_after_sort,
+                temp_path_after_clean,
             ]:
                 if os.path.exists(temp_file):
                     os.remove(temp_file)
 
-            print(f"Data saved to {output_path}")
-            print(f"Asset updated: {processed_data_asset.uri}")
+            logger.info("Data saved to dataset", output_path=output_path)
+
+            logger.info("Asset updated", uri=processed_data_asset.uri)
             return output_path
 
         nulls_replaced = replace_nulls(file_path)
